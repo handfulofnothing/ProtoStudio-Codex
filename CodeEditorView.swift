@@ -3,9 +3,11 @@ import AppKit
 
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
-    var onTextChange: ((String) -> Void)? = nil
+    var onTextChange: (String) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -13,20 +15,14 @@ struct CodeEditorView: NSViewRepresentable {
         scrollView.hasHorizontalScroller = true
 
         let textView = NSTextView()
-        textView.delegate = context.coordinator
-        textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDataDetectionEnabled = false
-        textView.isAutomaticLinkDetectionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isGrammarCheckingEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
-        textView.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 1)
-        textView.textColor = .white
-        textView.insertionPointColor = .white
-        textView.drawsBackground = true
+        textView.isRichText = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        textView.backgroundColor = NSColor.black
+        textView.textColor = NSColor.white
+        textView.insertionPointColor = NSColor.white
+        textView.delegate = context.coordinator
         textView.string = text
         textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
@@ -52,7 +48,7 @@ struct CodeEditorView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
-            parent.onTextChange?(textView.string)
+            parent.onTextChange(textView.string)
         }
     }
 }
