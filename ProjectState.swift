@@ -1,23 +1,15 @@
 import Foundation
+import Combine
 
-struct ProjectState {
-    var projectName: String
-    var projectURL: URL
+final class ProjectState: ObservableObject {
+    @Published var projectURL: URL?
+    @Published var coffeeScript: String = ""
+    @Published var compileError: CompileError?
+    @Published var reloadID: UUID = UUID()
+    @Published var serverPort: UInt16?
 
-    var coffeeScriptText: String
-    var hasUnsavedChanges: Bool
-
-    var lastCompileError: CompileError?
-    var serverPort: Int?
-}
-
-struct CompileError: Identifiable, Error {
-    let id = UUID()
-    let message: String
-    let line: Int?
-
-    init(message: String, line: Int? = nil) {
-        self.message = message
-        self.line = line
+    var previewURL: URL? {
+        guard let port = serverPort else { return nil }
+        return URL(string: "http://localhost:\(port)/index.html?reload=\(reloadID)")
     }
 }

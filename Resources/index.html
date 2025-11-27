@@ -1,77 +1,13 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <meta charset="utf-8">
-        
-        <meta name="format-detection" content="telephone=no">
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
-        <script type="text/javascript">
-        // This automatically sets the right viewport scale on mobile devices
-        (function() {
-        var scale = 1 / window.devicePixelRatio
-        var viewport = "width=device-width, height=device-height, initial-scale=" + scale + ", maximum-scale=" + scale + ", user-scalable=no"
-        var iOS = /iPad|iPhone|iPod/.test(navigator.platform)
-        if (iOS) { viewport += ", shrink-to-fit=no" }
-        document.write("<meta name=\"viewport\" content=\"" + viewport + "\">")
-        })()
-        </script>
-        <title>Framer Clone</title>
-        <style>
-            body { margin: 0; padding: 0; overflow: hidden; }
-        </style>
-        <script src="framer/framer.js"></script>
-        <script src="framer/coffee-script.js"></script>
-    </head>
-    <body>
-        <script type="text/javascript">
-            console.log('Starting CoffeeScript compilation...');
-            
-            // Wait a bit for all scripts to load
-            setTimeout(function() {
-                console.log('Compiling CoffeeScript...');
-                try {
-                    // Files to compile (modules first, then app.coffee)
-                    // MODULES_ARRAY
-                    var filesToCompile = ['app.coffee'];
-                    // END_MODULES_ARRAY
-                    
-                    console.log('Files to compile:', filesToCompile);
-                    
-                    var compiledScripts = [];
-                    filesToCompile.forEach(function(filename, index) {
-                        console.log('Processing ' + filename + '...');
-                        
-                        // Fetch with cache busting
-                        var xhr = new XMLHttpRequest();
-                        var cacheBuster = '?t=' + new Date().getTime();
-                        xhr.open('GET', filename + cacheBuster, false);
-                        xhr.send();
-                        
-                        if (xhr.status === 200) {
-                            console.log('Loaded: ' + filename);
-                            var compiled = CoffeeScript.compile(xhr.responseText, { bare: true });
-                            compiledScripts.push(compiled);
-                            console.log('Compiled: ' + filename);
-                        } else {
-                            console.error('Failed to load: ' + filename);
-                        }
-                    });
-                    
-                    // Execute all compiled scripts in order (modules first, then app.coffee)
-                    compiledScripts.forEach(function(code, index) {
-                        eval(code);
-                        console.log('Executed script ' + (index + 1));
-                    });
-                    
-                    console.log('✅ All CoffeeScript compiled successfully');
-                } catch (e) {
-                    console.error('❌ CoffeeScript compilation error:', e.message);
-                    console.error('Stack:', e.stack);
-                    document.body.innerHTML = '<div style="color: red; padding: 20px; font-family: monospace;"><h2>Compilation Error</h2><pre>' + e.message + '</pre></div>';
-                }
-            }, 100);
-        </script>
-    </body>
+<head>
+    <meta charset="utf-8" />
+    <title>Framer Classic Preview</title>
+    <style>
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+    </style>
+</head>
+<body>
+    <script src="app.js"></script>
+</body>
 </html>

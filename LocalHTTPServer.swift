@@ -3,86 +3,89 @@ import Network
 
 /// Minimal static file HTTP server for previewing the project folder.
 final class LocalHTTPServer {
-    let rootURL: URL
-    private(set) var port: Int?
+    private let listener: NWListener
+    private let rootDirectory: URL
+    private let queue = DispatchQueue(label: "LocalHTTPServer")
+    private(set) var port: UInt16?
 
-    private var listener: NWListener?
-    private let queue = DispatchQueue(label: "LocalHTTPServer.queue")
-
-    init(rootURL: URL) {
-        self.rootURL = rootURL
+    init?(rootDirectory: URL) {
+        self.rootDirectory = rootDirectory
+        do {
+            listener = try NWListener(using: .tcp, on: .any)
+        } catch {
+            print("Failed to start listener: \(error)")
+            return nil
+        }
     }
 
-    func start() throws {
-        let parameters = NWParameters.tcp
-        let listener = try NWListener(using: parameters, on: .any)
-        self.listener = listener
+    func start() {
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.handle(connection: connection)
+        }
 
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                if let rawPort = listener.port?.rawValue {
-                    self?.port = Int(rawPort)
+                if let port = self?.listener.port?.rawValue {
+                    self?.port = port
                 }
             default:
                 break
             }
         }
 
-        listener.newConnectionHandler = { [weak self] connection in
-            connection.start(queue: self?.queue ?? .main)
-            self?.receive(on: connection)
-        }
-
         listener.start(queue: queue)
     }
 
-    func stop() {
-        listener?.cancel()
-        listener = nil
+    private func handle(connection: NWConnection) {
+        connection.start(queue: queue)
+        receiveRequest(on: connection)
     }
 
-    private func receive(on connection: NWConnection) {
+    private func receiveRequest(on connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self = self else { return }
-            defer { if isComplete || error != nil { connection.cancel() } }
-
-            guard let data = data, !data.isEmpty, let request = String(data: data, encoding: .utf8) else { return }
-            let path = self.parsePath(from: request)
-            let response = self.response(forPath: path)
-            connection.send(content: response, completion: .contentProcessed { _ in
+            if let data = data, !data.isEmpty, let request = String(data: data, encoding: .utf8) {
+                let path = parsePath(from: request)
+                let response = self.responseForPath(path)
+                connection.send(content: response, completion: .contentProcessed { _ in
+                    connection.cancel()
+                })
+            }
+            if isComplete || error != nil {
                 connection.cancel()
-            })
+            }
         }
     }
 
     private func parsePath(from request: String) -> String {
-        guard let firstLine = request.split(separator: "\n").first else { return "/" }
-        let parts = firstLine.split(separator: " ")
-        guard parts.count > 1 else { return "/" }
-        let rawPath = String(parts[1])
+        let lines = request.split(separator: "\n")
+        guard let first = lines.first else { return "/" }
+        let components = first.split(separator: " ")
+        guard components.count > 1 else { return "/" }
+        let rawPath = String(components[1])
         if let queryIndex = rawPath.firstIndex(of: "?") {
             return String(rawPath[..<queryIndex])
         }
         return rawPath
     }
 
-    private func response(forPath path: String) -> Data {
-        var trimmed = path
-        if trimmed.hasPrefix("/") { trimmed.removeFirst() }
-        if trimmed.isEmpty { trimmed = "index.html" }
+    private func responseForPath(_ path: String) -> Data {
+        var filePath = path
+        if filePath.hasPrefix("/") { filePath.removeFirst() }
+        if filePath.isEmpty { filePath = "index.html" }
 
-        let target = rootURL.appendingPathComponent(trimmed)
-        guard FileManager.default.fileExists(atPath: target.path) else {
-            return buildResponse(status: "404 Not Found", mime: "text/plain", body: Data("Not Found".utf8))
+        let targetURL = rootDirectory.appendingPathComponent(filePath)
+        let data: Data
+        if let fileData = try? Data(contentsOf: targetURL) {
+            data = fileData
+        } else {
+            let body = "Not Found"
+            return buildResponse(status: "404 Not Found", mime: "text/plain", body: Data(body.utf8))
         }
 
-        let mime = mimeType(for: target.pathExtension)
-        guard let body = try? Data(contentsOf: target) else {
-            return buildResponse(status: "500 Internal Server Error", mime: "text/plain", body: Data("Error reading file".utf8))
-        }
-
-        return buildResponse(status: "200 OK", mime: mime, body: body)
+        let mime = mimeType(for: targetURL.pathExtension)
+        return buildResponse(status: "200 OK", mime: mime, body: data)
     }
 
     private func buildResponse(status: String, mime: String, body: Data) -> Data {
