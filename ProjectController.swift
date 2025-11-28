@@ -3,104 +3,129 @@ import Combine
 
 /// Coordinates project lifecycle, compilation, and preview reloads.
 final class ProjectController: ObservableObject {
-    @Published var state = ProjectState()
+    @Published var state: ProjectState
+    @Published var reloadID = UUID()
 
-    private let compiler = CompilerService()
-    private var server: LocalHTTPServer?
-    private var cancellables = Set<AnyCancellable>()
+    private let compiler: CompilerService
+    private var httpServer: LocalHTTPServer?
     private let fileManager = FileManager.default
 
-    init() {
-        state.objectWillChange
-            .sink { [weak self] _ in
-                self?.objectWillChange.send()
-            }
-            .store(in: &cancellables)
+    init(projectURL: URL, compiler: CompilerService = try! CompilerService()) throws {
+        self.compiler = compiler
+
+        if !fileManager.fileExists(atPath: projectURL.path) {
+            try fileManager.createDirectory(at: projectURL, withIntermediateDirectories: true)
+        }
+
+        let projectName = projectURL.lastPathComponent
+        let coffeeScriptText = try Self.loadOrCreateCoffeeFile(at: projectURL, fileManager: fileManager)
+        try Self.ensureTemplateFiles(at: projectURL, fileManager: fileManager)
+
+        self.state = ProjectState(
+            projectName: projectName,
+            projectURL: projectURL,
+            coffeeScriptText: coffeeScriptText,
+            hasUnsavedChanges: false,
+            lastCompileError: nil,
+            serverPort: nil
+        )
+
+        try startServer()
     }
 
-    func start() {
-        guard state.projectURL == nil else { return }
-        let projectFolder = prepareDefaultProject()
-        state.projectURL = projectFolder
-        loadProject()
-        startServer(root: projectFolder)
+    // MARK: - Project Files
+
+    func loadProjectFiles() throws {
+        let coffeeURL = state.projectURL.appendingPathComponent("app.coffee")
+        let contents = try String(contentsOf: coffeeURL)
+        state.coffeeScriptText = contents
+        state.hasUnsavedChanges = false
     }
 
-    // MARK: - Project Loading
-
-    private func prepareDefaultProject() -> URL {
-        let base = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let projectFolder = base.appendingPathComponent("FramerClassicProject", isDirectory: true)
-        let resources = Bundle.main.resourceURL ?? Bundle.main.bundleURL
-
-        if !fileManager.fileExists(atPath: projectFolder.path) {
-            try? fileManager.createDirectory(at: projectFolder, withIntermediateDirectories: true)
-        }
-
-        // Copy template files if missing
-        let templateFiles = ["index.html", "app.coffee"]
-        for file in templateFiles {
-            let dest = projectFolder.appendingPathComponent(file)
-            if !fileManager.fileExists(atPath: dest.path) {
-                let source = resources.appendingPathComponent(file)
-                try? fileManager.copyItem(at: source, to: dest)
-            }
-        }
-
-        // Ensure initial app.js exists
-        let appJS = projectFolder.appendingPathComponent("app.js")
-        if !fileManager.fileExists(atPath: appJS.path) {
-            try? "console.log('Ready');".write(to: appJS, atomically: true, encoding: .utf8)
-        }
-
-        return projectFolder
-    }
-
-    private func loadProject() {
-        guard let projectURL = state.projectURL else { return }
-        let coffeeURL = projectURL.appendingPathComponent("app.coffee")
-        if let contents = try? String(contentsOf: coffeeURL) {
-            state.coffeeScript = contents
-        }
+    func saveCoffeeScript(_ text: String) throws {
+        let coffeeURL = state.projectURL.appendingPathComponent("app.coffee")
+        try text.write(to: coffeeURL, atomically: true, encoding: .utf8)
+        state.hasUnsavedChanges = false
     }
 
     // MARK: - Save & Compile
 
     func handleSaveShortcut() {
-        saveCoffeeScript()
-        compileAndReload()
-    }
-
-    private func saveCoffeeScript() {
-        guard let projectURL = state.projectURL else { return }
-        let coffeeURL = projectURL.appendingPathComponent("app.coffee")
-        try? state.coffeeScript.write(to: coffeeURL, atomically: true, encoding: .utf8)
-    }
-
-    func compileAndReload() {
-        guard let projectURL = state.projectURL else { return }
-        let result = compiler.compile(coffee: state.coffeeScript)
-
-        switch result {
-        case .success(let js):
-            let outputURL = projectURL.appendingPathComponent("app.js")
-            do {
-                try js.write(to: outputURL, atomically: true, encoding: .utf8)
-                state.compileError = nil
-                state.reloadID = UUID()
-            } catch {
-                state.compileError = CompileError(message: "Failed to write app.js: \(error.localizedDescription)")
-            }
-        case .failure(let error):
-            state.compileError = error
+        do {
+            try saveCoffeeScript(state.coffeeScriptText)
+            compileAndReload()
+        } catch {
+            state.lastCompileError = CompileError(message: error.localizedDescription, line: nil)
         }
     }
 
-    // MARK: - HTTP Server
+    func compileAndReload() {
+        let source = state.coffeeScriptText
+        switch compiler.compile(coffee: source) {
+        case .success(let js):
+            do {
+                let jsURL = state.projectURL.appendingPathComponent("app.js")
+                try js.write(to: jsURL, atomically: true, encoding: .utf8)
+                state.lastCompileError = nil
+                bumpReloadID()
+            } catch {
+                state.lastCompileError = CompileError(message: "Failed to write app.js: \(error.localizedDescription)", line: nil)
+            }
+        case .failure(let error):
+            state.lastCompileError = error
+        }
+    }
 
-    private func startServer(root: URL) {
-        server = LocalHTTPServer(rootDirectory: root)
-        server?.start()
-        state.serverPort = server?.port
+    func bumpReloadID() {
+        reloadID = UUID()
+    }
+
+    // MARK: - Preview
+
+    var previewURL: URL? {
+        guard let port = state.serverPort else { return nil }
+        return URL(string: "http://localhost:\(port)/index.html?reload=\(reloadID)")
+    }
+
+    // MARK: - Server
+
+    private func startServer() throws {
+        let server = LocalHTTPServer(rootURL: state.projectURL)
+        try server.start()
+        httpServer = server
+        state.serverPort = Int(server.port ?? 0)
+    }
+
+    // MARK: - Templates
+
+    private static func loadOrCreateCoffeeFile(at projectURL: URL, fileManager: FileManager) throws -> String {
+        let coffeeURL = projectURL.appendingPathComponent("app.coffee")
+        if let existing = try? String(contentsOf: coffeeURL) {
+            return existing
+        }
+
+        let defaultCoffee = try defaultResource(named: "app", withExtension: "coffee")
+        try defaultCoffee.write(to: coffeeURL, atomically: true, encoding: .utf8)
+        return defaultCoffee
+    }
+
+    private static func ensureTemplateFiles(at projectURL: URL, fileManager: FileManager) throws {
+        let indexURL = projectURL.appendingPathComponent("index.html")
+        if !fileManager.fileExists(atPath: indexURL.path) {
+            let html = try defaultResource(named: "index", withExtension: "html")
+            try html.write(to: indexURL, atomically: true, encoding: .utf8)
+        }
+
+        let assetsURL = projectURL.appendingPathComponent("assets")
+        if !fileManager.fileExists(atPath: assetsURL.path) {
+            try fileManager.createDirectory(at: assetsURL, withIntermediateDirectories: true)
+        }
+    }
+
+    private static func defaultResource(named name: String, withExtension ext: String) throws -> String {
+        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else {
+            throw NSError(domain: "ProjectController", code: 10, userInfo: [NSLocalizedDescriptionKey: "Missing template \(name).\(ext)"])
+        }
+        return try String(contentsOf: url)
     }
 }

@@ -5,22 +5,13 @@ struct ErrorBannerView: View {
 
     var body: some View {
         VStack {
-            HStack(alignment: .top) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.white)
-                VStack(alignment: .leading) {
-                    Text("Compile Error")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    Text(formattedMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                }
-                Spacer()
-            }
-            .padding()
+            Text(formattedMessage)
+                .font(.caption)
+                .padding(8)
         }
-        .background(Color.red)
+        .frame(maxWidth: .infinity)
+        .background(Color.red.opacity(0.9))
+        .foregroundColor(.white)
     }
 
     private var formattedMessage: String {
